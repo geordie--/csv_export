@@ -1,0 +1,5 @@
+; $Id$
+name = Csv Export 
+description = Esporta le Schede Intervento in formato Csv
+core = 6.x
+dependencies[] = views_bulk_operations

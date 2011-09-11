@@ -1,0 +1,140 @@
+<?php
+
+/**
+ * Implementation of hook_node_operations().
+ */
+function csv_export_node_operations() {
+	$operations = array(
+		'node_export' => array(
+				'label' => t('Esporta le schede in CSV'),
+				'callback' => 'node_export_csv')
+	);
+	return $operations;
+}
+
+/**
+ * Implementation of hook_action_info().
+ */
+function csv_export_action_info() {
+  return array(
+	'csv_export_crea_riepilogo_action' => array(
+      'description' => t('Crea un riepilogo dei dati utente'),
+      'type' => 'user',
+      'configurable' => FALSE,
+      'hooks' => array('any' => TRUE)
+        )
+      );
+}
+
+//TODO
+/**
+* Valid permissions for this module
+* @return array An array of valid permissions for the downloads module
+*/
+/*
+function csv_export_perm() {
+  return array();
+
+}
+*/
+
+/** 
+ * * Returns CSV file to download. 
+ * * @param array $nodes
+ * */
+function node_export_csv($nodes) {
+    $sql = "SELECT node.nid AS nid,
+   scheda.field_data_ingresso_value AS data_ingresso,
+   scheda.field_documento_value AS documento,
+   scheda.field_rifacquisto_value AS rifacquisto,
+   scheda.field_macchinario_value AS macchinario,
+   scheda.field_seriale_value AS seriale,
+   scheda.field_difetto_dichiarato_value AS difetto_dichiarato,
+   scheda.field_accessori_value AS accessori,
+   profile_values_profile_nome.value AS nome,
+   profile_values_profile_cognome.value AS cognome,
+   profile_values_profile_ragsociale.value AS ragsociale,
+   profile_values_profile_partitaiva.value AS partitaiva
+ FROM node node 
+ LEFT JOIN content_type_scheda scheda ON node.vid = scheda.vid
+ INNER JOIN users users ON node.uid = users.uid
+ LEFT JOIN profile_values profile_values_profile_nome ON users.uid = profile_values_profile_nome.uid AND profile_values_profile_nome.fid = '1'
+ LEFT JOIN profile_values profile_values_profile_cognome ON users.uid = profile_values_profile_cognome.uid AND profile_values_profile_cognome.fid = '2'
+ LEFT JOIN profile_values profile_values_profile_ragsociale ON users.uid = profile_values_profile_ragsociale.uid AND profile_values_profile_ragsociale.fid = '7'
+ LEFT JOIN profile_values profile_values_profile_partitaiva ON users.uid = profile_values_profile_partitaiva.uid AND profile_values_profile_partitaiva.fid = '10'
+  WHERE node.nid IN (". implode(',', $nodes) .")";
+
+	$result = db_query($sql);
+	while ($scheda = db_fetch_array($result)) {
+        /* Converto la data nel formato GG-MM-AAAA */
+        $data = $scheda["data_ingresso"];            
+        $scheda["data_ingresso"]= date("d-m-Y",strtotime($data));
+
+		$schede[$scheda['nid']] = implode('~ ', $scheda); // remove any commas that could mess up the CSV file
+		$schede[$scheda['nid']] = str_replace(',', '', $schede[$scheda['nid']]); // re-add in comma delimiters
+		$schede[$scheda['nid']] = str_replace('~', ',', $schede[$scheda['nid']]);
+
+		/* Aggiunge gli apici */
+		$schede[$scheda['nid']] = "\"".$schede[$scheda['nid']];
+		$schede[$scheda['nid']] = str_replace(', ', '", "', $schede[$scheda['nid']]);
+		$schede[$scheda['nid']] = $schede[$scheda['nid']]."\"";
+	}
+
+	foreach ($schede as $row) {
+		$file .= $row ."\n";
+	}
+
+	foreach ($nodes as $nid) {
+		// Load node to edit
+		$node = node_load($nid);
+		$title = $node->title;
+		// Index value of the cck field
+		$index = 0;
+		// value that you want to insert
+		$new_value = 1;
+		// Set value
+		$node->field_esportata[$index] = array('value' => $new_value);
+		// Save Node
+		node_save($node);
+		// Update content if node exists, otherwise use content_insert()
+		content_update($node);
+		// record a message noting the action taken
+		watchdog('action', 'Esportata in csv la scheda  %title', array('%title' => $title, '%nid' => $nid));
+	}
+	content_clear_type_cache();
+
+	$filename = date("Ymd_H_i");
+	$filename .=".csv";
+
+	drupal_set_header("refresh:1;url=./gestioneschede");
+	drupal_set_header("Cache-Control: must-revalidate, post-check=0, pre-check=0");
+	drupal_set_header("Content-Type: text/csv");
+	drupal_set_header("Content-Disposition: attachment; filename=$filename");
+
+	die(print $file);
+}
+
+
+function csv_export_crea_riepilogo_action(&$object, $context = array()) {
+	//Ottengo i dati dall'oggetto di tipo user
+	$uid = (int)$object -> uid;
+	$profile_nome = $object -> profile_nome;
+	$profile_cognome = $object -> profile_cognome;
+	$profile_telefono = $object -> profile_telefono;
+	$profile_fax = $object -> profile_fax;
+	$profile_tipologia = $object -> profile_tipologia;
+	$profile_ragsociale = $object -> profile_ragsociale;
+	// Concateno le stringhe
+	$riepilogo = $profile_nome." ".$profile_cognome." ".$profile_telefono." ".$profile_fax." ".$profile_tipologia." ".$profile_ragsociale;
+
+	// Recupero il field id del campo da andare a popolare col riepilogo
+	$q = db_query("SELECT fid from {profile_fields} where name = 'profile_riepilogo'");
+	if (count($q) > 0) {
+		$data = db_fetch_array($q);
+		if ($data != FALSE) {
+			$fid = $data['fid'];
+			db_query("UPDATE {profile_values} SET value = '%s' WHERE fid = %d and uid = %d", $riepilogo, $fid, $uid);
+		}
+	}
+	watchdog('user', 'Creato un riepilogo anagrafico per %uid - %nome %cognome.', array('%uid' => $uid, '%nome' => $profile_nome,'%cognome' => $profile_cognome ));
+}
